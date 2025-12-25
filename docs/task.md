@@ -15,9 +15,9 @@
     - [x] Implement Swing Point Algo <!-- id: 12 -->
     - [x] Implement Range Compression Algo <!-- id: 13 -->
     - [x] Implement Displacement Algo <!-- id: 14 -->
-- [/] Market State Graph <!-- id: 15 -->
+- [x] Market State Graph <!-- id: 15 -->
     - [x] Define `MarketState` object <!-- id: 16 -->
-    - [ ] Implement state builder <!-- id: 17 -->
-- [ ] Hypothesis Engine <!-- id: 18 -->
-    - [ ] Define `Hypothesis` schema <!-- id: 19 -->
-    - [ ] Implement deterministic backtester <!-- id: 20 -->
+    - [x] Implement state builder <!-- id: 17 -->
+- [x] Hypothesis Engine <!-- id: 18 -->
+    - [x] Define `Hypothesis` schema <!-- id: 19 -->
+    - [x] Implement deterministic backtester <!-- id: 20 -->
