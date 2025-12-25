@@ -138,7 +138,8 @@ class DataLoader:
         df.drop(columns=['tp', 'pv', 'cum_pv', 'cum_vol'], inplace=True)
         
         df['atr'] = df['atr'].fillna(0)
-        df['vwap'] = df['vwap'].fillna(method='bfill') # Fill early gaps
+        # Rule 6: No Auto-Healing. If VWAP is NaN (start of data), leave it NaN.
+        # df['vwap'] = df['vwap'].fillna(method='bfill') 
         
         return df
 

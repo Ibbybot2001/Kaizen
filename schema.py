@@ -51,6 +51,7 @@ class StructureEvent(BaseModel):
     event_type: EventType
     start_bar: datetime
     end_bar: datetime
+    confirmed_at: datetime = Field(..., description="The exact timestamp when this event became known structure. CRITICAL for lookahead prevention.")
     direction: Direction
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     context: ContextTags

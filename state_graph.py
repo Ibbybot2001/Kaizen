@@ -11,15 +11,16 @@ class StateBuilder:
     
     def __init__(self, df: pd.DataFrame, events: List[StructureEvent]):
         self.df = df.sort_values('time').reset_index(drop=True)
-        self.events = sorted(events, key=lambda x: x.start_bar)
+        # We index by CONFIRMED_AT to prevent lookahead
+        self.events = sorted(events, key=lambda x: x.confirmed_at)
         
-        # Index events by start time for fast lookup during iteration
-        self.events_by_time = {}
+        # Index events by confirmation time for fast lookup during iteration
+        self.events_by_confirmation = {}
         for e in self.events:
-            t = e.start_bar
-            if t not in self.events_by_time:
-                self.events_by_time[t] = []
-            self.events_by_time[t].append(e)
+            t = e.confirmed_at
+            if t not in self.events_by_confirmation:
+                self.events_by_confirmation[t] = []
+            self.events_by_confirmation[t].append(e)
 
     def build_states(self) -> Dict[datetime, MarketState]:
         """
@@ -61,9 +62,9 @@ class StateBuilder:
             
             active_swings = next_active_swings
             
-            # 2. Ingest New Events occurring AT this bar
-            if curr_time in self.events_by_time:
-                new_events = self.events_by_time[curr_time]
+            # 2. Ingest New Events occurring AT this bar (Confirmation Time)
+            if curr_time in self.events_by_confirmation:
+                new_events = self.events_by_confirmation[curr_time]
                 for e in new_events:
                     # Add to Log
                     recent_events_log.append(e)

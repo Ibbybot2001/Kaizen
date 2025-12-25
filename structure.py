@@ -57,29 +57,30 @@ class StructureExtractor:
         
         # Process Highs
         for idx, row in pivot_highs.iterrows():
-            # Verify strict left/right isolation (rolling includes the bar itself, usually fine)
-            # Need to be careful of equal highs. For now, accept the first or all.
-            # Let's ensure strict strict definition checking if needed. 
-            # Rolling max logic is robust for standard definition.
+            # Rolling max window is centered, so the high happened 'right_bars' ago relative to the end of window?
+            # No, 'rolling(center=True)' puts the result at the center index.
+            # So if row['time'] is T, the data used included T + right_bars.
+            # Therefore, we strictly DO NOT KNOW this is a swing until T + right_bars.
             
-            # Construct Event
-            # Context extraction
-            # We need simple helpers for ContextTags. 
-            # For now, hardcode/simplify to prove the point.
+            # Since we are iterating on the subset that IS a pivot logic,
+            # We must calculate the confirmation time.
+            
+            # Note: We need the dataframe to look up the time right_bars later.
+            # But 'pivot_highs' is a subset. We need the integer index from original df.
+            
+            loc_idx = df.index.get_loc(idx)
+            conf_idx = loc_idx + right_bars
+            
+            if conf_idx >= len(df):
+                continue # Cannot confirm yet (end of data)
+                
+            conf_time = df.iloc[conf_idx]['time'] # The close of the confirmation bar
             
             event_id = f"SW-H-{row['time'].isoformat()}"
             
-            # Note: The 'End Bar' of a Swing Event is technically when it is CONFIRMED (i.e. right_bars later)
-            # But the swing itself happened at 'time'.
-            # Let's set start_bar = swing time, end_bar = swing time (instantaneous event?)
-            # Or end_bar = confirmation time? 
-            # Let's stick to start/end = swing bar for the EVENT itself, 
-            # but the 'extraction' system knows it appeared later.
-            
             context = ContextTags(
                 session=Session(row['session']) if row['session'] in ["ASIA", "LONDON"] else Session.OTHER, 
-                # ^ Simple map, need strict mapping later
-                regime=Regime.CHOP, # Placeholder algo
+                regime=Regime.CHOP, # Placeholder
                 time_of_day=row['time'].strftime('%H:%M'),
                 day_of_week=row['time'].dayofweek,
                 distance_to_vwap_std=(row['high'] - row['vwap']) / row['atr'] if row['atr'] > 0 else 0
@@ -90,16 +91,25 @@ class StructureExtractor:
                 event_type=EventType.SWING_HIGH,
                 start_bar=row['time'],
                 end_bar=row['time'],
-                direction=Direction.BEARISH, # Highs mark resistance (bearish reaction point)
-                confidence_score=1.0, # It is mathematically a pivot
+                confirmed_at=conf_time, # KEY CHANGE: Event is born here!
+                direction=Direction.BEARISH, 
+                confidence_score=1.0, 
                 context=context,
                 price_level=row['high'],
-                is_major=False # Needs higher timeframe logic
+                is_major=False 
             )
             swings.append(swing)
 
         # Process Lows
         for idx, row in pivot_lows.iterrows():
+            loc_idx = df.index.get_loc(idx)
+            conf_idx = loc_idx + right_bars
+            
+            if conf_idx >= len(df):
+                continue
+
+            conf_time = df.iloc[conf_idx]['time']
+
             event_id = f"SW-L-{row['time'].isoformat()}"
             
             context = ContextTags(
@@ -115,7 +125,8 @@ class StructureExtractor:
                 event_type=EventType.SWING_LOW,
                 start_bar=row['time'],
                 end_bar=row['time'],
-                direction=Direction.BULLISH, # Lows mark support (bullish reaction point)
+                confirmed_at=conf_time, # KEY CHANGE
+                direction=Direction.BULLISH, 
                 confidence_score=1.0,
                 context=context,
                 price_level=row['low'],
@@ -123,7 +134,11 @@ class StructureExtractor:
             )
             swings.append(swing)
 
-        # Sort by time
+        # Sort by confirmation time or start time?
+        # Events should be sorted by when they likely enter the system usage.
+        # But 'StructureEvent' usually implies start.
+        # Let's keep sorting by start_bar for the list, 
+        # but StateBuilder must index by confirmed_at.
         swings.sort(key=lambda x: x.start_bar)
         
         return swings
@@ -217,7 +232,8 @@ class StructureExtractor:
                 event_type=EventType.COMPRESSION,
                 start_bar=start_time, # Technically the signal start
                 end_bar=end_time,
-                direction=Direction.NEUTRAL, # Compression is potential energy, directionless until resolved
+                confirmed_at=end_time, # Confirmed at the close of the block
+                direction=Direction.NEUTRAL,
                 confidence_score=min(1.0, duration_bars / 20.0), # Longer compression = higher confidence?
                 context=context,
                 bar_count=duration_bars,
@@ -279,6 +295,7 @@ class StructureExtractor:
                 event_type=EventType.DISPLACEMENT,
                 start_bar=row['time'],
                 end_bar=row['time'],
+                confirmed_at=row['time'], # Confirmed at Bar Close
                 direction=direction,
                 confidence_score=conf,
                 context=context,
