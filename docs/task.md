@@ -1,0 +1,23 @@
+# Tasks
+
+- [/] Initialize Project & Git <!-- id: 0 -->
+    - [x] Create project directory <!-- id: 1 -->
+    - [x] Initialize local git repository <!-- id: 2 -->
+    - [ ] Connect to GitHub Remote (Waiting for User URL) <!-- id: 3 -->
+- [x] Define Event Schema <!-- id: 4 -->
+    - [x] Create `schema.py` (Pydantic models for Events) <!-- id: 5 -->
+    - [x] Define `StructureEvent` base class <!-- id: 6 -->
+    - [x] Define concrete event types (Swing, Compression, Displacement, etc.) <!-- id: 7 -->
+- [x] Implement Data Contract <!-- id: 8 -->
+    - [x] Create `data_loader.py` <!-- id: 9 -->
+    - [x] Implement session indexing & feature scaffolding <!-- id: 10 -->
+- [/] Structure Extraction Layer <!-- id: 11 -->
+    - [ ] Implement Swing Point Algo <!-- id: 12 -->
+    - [ ] Implement Range Compression Algo <!-- id: 13 -->
+    - [ ] Implement Displacement Algo <!-- id: 14 -->
+- [ ] Market State Graph <!-- id: 15 -->
+    - [ ] Define `MarketState` object <!-- id: 16 -->
+    - [ ] Implement state builder <!-- id: 17 -->
+- [ ] Hypothesis Engine <!-- id: 18 -->
+    - [ ] Define `Hypothesis` schema <!-- id: 19 -->
+    - [ ] Implement deterministic backtester <!-- id: 20 -->
