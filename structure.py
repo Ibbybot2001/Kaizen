@@ -2,7 +2,7 @@ from typing import List
 import pandas as pd
 import numpy as np
 from datetime import timedelta
-from schema import StructureEvent, SwingEvent, CompressionEvent, DisplacementEvent, EventType, Direction, ContextTags, Regime, Session
+from schema import StructureEvent, SwingEvent, CompressionEvent, DisplacementEvent, LiquiditySweepEvent, EventType, Direction, ContextTags, Regime, Session
 
 class StructureExtractor:
     """
