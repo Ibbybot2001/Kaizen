@@ -307,6 +307,135 @@ class StructureExtractor:
             
         return displacements
 
+    def extract_sweeps(self, swings: List[SwingEvent], min_reclaim_pts: float = 0.0) -> List[LiquiditySweepEvent]:
+        """
+        Identifies Liquidity Sweeps (Turtle Soups / Raids).
+        Logic:
+           Bearish: High > Old_High AND Close < Old_High - min_reclaim_pts
+           Bullish: Low < Old_Low AND Close > Old_Low + min_reclaim_pts
+        
+        CRITICAL: We can only sweep a swing that is CONFIRMED *before* the current bar.
+        """
+        sweeps = []
+        from schema import LiquiditySweepEvent
+        
+        # Sort swings by confirmation time to ensure availability
+        # Actually, for the scanner, we need to know "what swings exist at time T?"
+        # We can iterate through the dataframe and maintain an 'active_swings' list 
+        # that updates based on confirmed_at.
+        
+        # Optimization: fast lookup
+        # But this is "extraction", usually done batch.
+        # Let's do a simple iteration over DF.
+        
+        df = self.df.sort_values('time').reset_index(drop=True)
+        
+        # Organize swings by CONFIRMATION time
+        swings_by_conf = {}
+        for s in swings:
+            if s.confirmed_at not in swings_by_conf:
+                swings_by_conf[s.confirmed_at] = []
+            swings_by_conf[s.confirmed_at].append(s)
+            
+        active_highs: List[SwingEvent] = []
+        active_lows: List[SwingEvent] = []
+        
+        # To avoid re-sweeping the same level continuously if price chops around it,
+        # usually a sweep is a discrete event. Ideally we invalidate the swing after it's swept?
+        # Or just log every sweep? The User's strategy implies "Zone Active" upon sweep.
+        # Let's log every discrete sweep event.
+        
+        for idx, row in df.iterrows():
+            curr_time = row['time']
+            
+            # 1. Update Active Structure (born at confirmed_at)
+            # Check if any swings are confirmed exactly at this bar? 
+            # Or were confirmed since last bar? 
+            # Assuming 1m data is continuous-ish.
+            
+            if curr_time in swings_by_conf:
+                new_swings = swings_by_conf[curr_time]
+                for s in new_swings:
+                    if s.event_type == EventType.SWING_HIGH:
+                        active_highs.append(s)
+                    elif s.event_type == EventType.SWING_LOW:
+                        active_lows.append(s)
+            
+            # 2. Check for Sweeps against Active Structure
+            # We check the MOST RECENT Major/Minor swings usually.
+            # User strategy: "lastMajHigh", "lastMinHigh".
+            # So we only care about the latest one.
+            
+            # Bearish Sweep (Sweep High)
+            if active_highs:
+                last_high = active_highs[-1] # The most recent confirmed high
+                
+                # Condition: High breached, but Close rejected
+                if row['high'] > last_high.price_level and row['close'] < (last_high.price_level - min_reclaim_pts):
+                    # Validate: Did this bar JUST breach it? Or was it already above?
+                    # "Sweep" implies a raid. 
+                    # User strategy logic: "high > lastMajHigh and close < lastMajHigh"
+                    # It runs on every bar.
+                    
+                    event_id = f"SWEEP-H-{curr_time.isoformat()}"
+                    
+                    context = ContextTags(
+                        session=Session(row['session']) if row['session'] in ["ASIA", "LONDON"] else Session.OTHER,
+                        regime=Regime.CHOP, # Placeholder
+                        time_of_day=row['time'].strftime('%H:%M'),
+                        day_of_week=row['time'].dayofweek,
+                        distance_to_vwap_std=0.0
+                    )
+                    
+                    sweep = LiquiditySweepEvent(
+                        id=event_id,
+                        event_type=EventType.LIQUIDITY_SWEEP,
+                        start_bar=curr_time,
+                        end_bar=curr_time,
+                        confirmed_at=curr_time, # Confirmed at Close
+                        direction=Direction.BEARISH,
+                        confidence_score=1.0,
+                        context=context,
+                        swept_level=last_high.price_level,
+                        sweep_depth=row['high'] - last_high.price_level,
+                        swing_id=last_high.id,
+                        is_major=last_high.is_major
+                    )
+                    sweeps.append(sweep)
+
+            # Bullish Sweep (Sweep Low)
+            if active_lows:
+                last_low = active_lows[-1]
+                
+                if row['low'] < last_low.price_level and row['close'] > (last_low.price_level + min_reclaim_pts):
+                    event_id = f"SWEEP-L-{curr_time.isoformat()}"
+                    
+                    context = ContextTags(
+                        session=Session(row['session']) if row['session'] in ["ASIA", "LONDON"] else Session.OTHER,
+                        regime=Regime.CHOP,
+                        time_of_day=row['time'].strftime('%H:%M'),
+                        day_of_week=row['time'].dayofweek,
+                        distance_to_vwap_std=0.0
+                    )
+                    
+                    sweep = LiquiditySweepEvent(
+                        id=event_id,
+                        event_type=EventType.LIQUIDITY_SWEEP,
+                        start_bar=curr_time,
+                        end_bar=curr_time,
+                        confirmed_at=curr_time,
+                        direction=Direction.BULLISH,
+                        confidence_score=1.0,
+                        context=context,
+                        swept_level=last_low.price_level,
+                        sweep_depth=last_low.price_level - row['low'],
+                        swing_id=last_low.id,
+                        is_major=last_low.is_major
+                    )
+                    sweeps.append(sweep)
+                    
+        return sweeps
+
 if __name__ == "__main__":
     from data_loader import DataLoader
     
