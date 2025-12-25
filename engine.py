@@ -70,6 +70,8 @@ class HypothesisEngine:
             outcome = self._simulate_outcome(t, hypothesis, trigger_event)
             if outcome:
                 outcome['trigger_time'] = t
+                outcome['session'] = state.session.value if hasattr(state.session, 'value') else state.session
+                outcome['regime'] = state.regime.value if hasattr(state.regime, 'value') else state.regime
                 results.append(outcome)
                 
         return pd.DataFrame(results)
@@ -188,10 +190,10 @@ if __name__ == "__main__":
     from state_graph import StateBuilder
     from schema import Condition, Trigger, ResultExpectation, InvalidationCriteria
     
-    print("Loading Data...")
+    print("Loading Data (Full Verification)...")
     loader = DataLoader(r"C:\Users\CEO\.gemini\antigravity\scratch\kaizen_1m_data_ibkr_2yr.csv")
-    df = loader.load_and_process().head(10000)
-    loader.log_missing_bars() # Verify Rule 9 compliance during test run
+    df = loader.load_and_process() # Full Data
+    loader.log_missing_bars()
     
     # ... (previous setup)
     print("Extracting Structure...")
@@ -214,13 +216,47 @@ if __name__ == "__main__":
     engine = HypothesisEngine(states, df)
     results = engine.run(h_kaizen)
     
-    print("\n--- Kaizen Reversal Backtest Results ---")
+    print("\n--- Kaizen Reversal Backtest Results (Full Verification) ---")
     if not results.empty:
-        print(results['result'].value_counts())
-        print(f"Total Trades: {len(results)}")
-        win_rate = len(results[results['result']=='WIN']) / len(results) * 100
+        # 1. Basic Metrics
+        total_trades = len(results)
+        winners = results[results['result'] == 'WIN']
+        losers = results[results['result'] == 'LOSS']
+        win_rate = len(winners) / total_trades * 100
+        expectancy_r = (len(winners) * h_kaizen.expectation.min_value - len(losers) * 1.0) / total_trades
+        
+        print(f"Total Trades: {total_trades}")
         print(f"Win Rate: {win_rate:.1f}%")
-        print(f"Expectancy (R): { (win_rate/100 * h_kaizen.expectation.min_value) - ((100-win_rate)/100 * 1.0) :.2f}R")
-        print(results.head())
+        print(f"Expectancy: {expectancy_r:.2f}R")
+        
+        # 2. Drawdown (R-based)
+        # Construct equity curve in R
+        results = results.sort_values('trigger_time')
+        results['r_outcome'] = results['pnl_r']
+        results['cum_r'] = results['r_outcome'].cumsum()
+        results['peak_r'] = results['cum_r'].cummax()
+        results['dd_r'] = results['cum_r'] - results['peak_r']
+        max_dd = results['dd_r'].min()
+        print(f"Max Drawdown: {max_dd:.2f}R")
+        
+        # 3. Segregation (Session / Regime)
+        # We need to map trigger_time to session/regime.
+        # Ideally 'outcome' dict should already have this from 'state' context.
+        # But 'state' wasn't passed to outcome simulation fully.
+        # Let's add context to results in the run loop.
+        
+        # (See run loop update below - assumed done or will be done)
+        if 'session' in results.columns:
+            print("\n[Performance by Session]")
+            print(results.groupby('session')['r_outcome'].agg(['count', 'sum', 'mean']))
+            
+        if 'regime' in results.columns:
+            print("\n[Performance by Regime]")
+            print(results.groupby('regime')['r_outcome'].agg(['count', 'sum', 'mean']))
+
+        # 4. Save detailed log
+        results.to_csv("logs/verification_run_full.csv", index=False)
+        print("\nDetailed trade log saved to logs/verification_run_full.csv")
+        
     else:
         print("No trades found matching Kaizen Reversal.")
