@@ -11,12 +11,12 @@
 - [x] Implement Data Contract <!-- id: 8 -->
     - [x] Create `data_loader.py` <!-- id: 9 -->
     - [x] Implement session indexing & feature scaffolding <!-- id: 10 -->
-- [/] Structure Extraction Layer <!-- id: 11 -->
-    - [ ] Implement Swing Point Algo <!-- id: 12 -->
-    - [ ] Implement Range Compression Algo <!-- id: 13 -->
-    - [ ] Implement Displacement Algo <!-- id: 14 -->
-- [ ] Market State Graph <!-- id: 15 -->
-    - [ ] Define `MarketState` object <!-- id: 16 -->
+- [x] Structure Extraction Layer <!-- id: 11 -->
+    - [x] Implement Swing Point Algo <!-- id: 12 -->
+    - [x] Implement Range Compression Algo <!-- id: 13 -->
+    - [x] Implement Displacement Algo <!-- id: 14 -->
+- [/] Market State Graph <!-- id: 15 -->
+    - [x] Define `MarketState` object <!-- id: 16 -->
     - [ ] Implement state builder <!-- id: 17 -->
 - [ ] Hypothesis Engine <!-- id: 18 -->
     - [ ] Define `Hypothesis` schema <!-- id: 19 -->
