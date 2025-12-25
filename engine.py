@@ -197,9 +197,9 @@ class HypothesisEngine:
             curr_time = self.sorted_times[curr_idx]
             bar = self.price_lookup[curr_time]
             
-            # Check Invalidation First (conservative)
+            # Check Invalidation / Stop
             if is_long:
-                if bar['close'] < inval_price: # Stop hit
+                if bar['close'] < stop_price: # Stop hit
                     return {
                         "result": "LOSS",
                         "pnl_r": -1.0, 
@@ -215,7 +215,7 @@ class HypothesisEngine:
                         "exit_reason": "TARGET_MET"
                     }
             else: # Short
-                if bar['close'] > inval_price:
+                if bar['close'] > stop_price:
                     return {
                         "result": "LOSS",
                         "pnl_r": -1.0,
@@ -269,49 +269,32 @@ if __name__ == "__main__":
     h_kaizen = get_kaizen_reversal_hypothesis()
     
     engine = HypothesisEngine(states, df)
-    results = engine.run(h_kaizen)
+    # 1. Real Strategy Run
+    print("\n--- [RUN 1] Kaizen Reversal (Strategy) ---")
+    results_strat = engine.run(h_kaizen, mode="NORMAL")
+    results_strat.to_csv("logs/run_strategy.csv", index=False)
     
-    print("\n--- Kaizen Reversal Backtest Results (Full Verification) ---")
-    if not results.empty:
-        # 1. Basic Metrics
-        total_trades = len(results)
-        winners = results[results['result'] == 'WIN']
-        losers = results[results['result'] == 'LOSS']
-        win_rate = len(winners) / total_trades * 100
-        expectancy_r = (len(winners) * h_kaizen.expectation.min_value - len(losers) * 1.0) / total_trades
+    if not results_strat.empty:
+        win_rate = len(results_strat[results_strat['result']=='WIN']) / len(results_strat)
+        mean_r = results_strat['pnl_r'].mean()
+        print(f"Strategy Expectancy: {mean_r:.4f} R | WR: {win_rate*100:.1f}%")
         
-        print(f"Total Trades: {total_trades}")
-        print(f"Win Rate: {win_rate:.1f}%")
-        print(f"Expectancy: {expectancy_r:.2f}R")
+    # 2. Null Hypothesis Run
+    print("\n--- [RUN 2] Null Hypothesis (Random Direction) ---")
+    results_null = engine.run(h_kaizen, mode="NULL_RANDOM_DIRECTION", random_seed=999)
+    results_null.to_csv("logs/run_null.csv", index=False)
+    
+    if not results_null.empty:
+        win_rate = len(results_null[results_null['result']=='WIN']) / len(results_null)
+        mean_r = results_null['pnl_r'].mean()
+        print(f"Null Expectancy: {mean_r:.4f} R | WR: {win_rate*100:.1f}%")
         
-        # 2. Drawdown (R-based)
-        # Construct equity curve in R
-        results = results.sort_values('trigger_time')
-        results['r_outcome'] = results['pnl_r']
-        results['cum_r'] = results['r_outcome'].cumsum()
-        results['peak_r'] = results['cum_r'].cummax()
-        results['dd_r'] = results['cum_r'] - results['peak_r']
-        max_dd = results['dd_r'].min()
-        print(f"Max Drawdown: {max_dd:.2f}R")
-        
-        # 3. Segregation (Session / Regime)
-        # We need to map trigger_time to session/regime.
-        # Ideally 'outcome' dict should already have this from 'state' context.
-        # But 'state' wasn't passed to outcome simulation fully.
-        # Let's add context to results in the run loop.
-        
-        # (See run loop update below - assumed done or will be done)
-        if 'session' in results.columns:
-            print("\n[Performance by Session]")
-            print(results.groupby('session')['r_outcome'].agg(['count', 'sum', 'mean']))
-            
-        if 'regime' in results.columns:
-            print("\n[Performance by Regime]")
-            print(results.groupby('regime')['r_outcome'].agg(['count', 'sum', 'mean']))
-
-        # 4. Save detailed log
-        results.to_csv("logs/verification_run_full.csv", index=False)
-        print("\nDetailed trade log saved to logs/verification_run_full.csv")
-        
-    else:
-        print("No trades found matching Kaizen Reversal.")
+    # Comparison
+    print("\n--- COMPARISON ---")
+    if not results_strat.empty and not results_null.empty:
+        diff = results_strat['pnl_r'].mean() - results_null['pnl_r'].mean()
+        print(f"Strategy Advantage: {diff:.4f} R")
+        if diff > 0.05:
+            print("PASS: Strategy outperforms Null significantly.")
+        else:
+            print("FAIL: Strategy provides no significant edge over coin flip at these levels.")
