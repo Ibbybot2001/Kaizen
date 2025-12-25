@@ -23,17 +23,18 @@ class HypothesisEngine:
         # Build map from time -> index for fast forward scanning
         self.time_to_idx = {t: i for i, t in enumerate(self.sorted_times)}
 
-    def run(self, hypothesis: Hypothesis) -> pd.DataFrame:
+    def run(self, hypothesis: Hypothesis, mode: str = "NORMAL", random_seed: int = 42) -> pd.DataFrame:
         """
         Scans all states for Trigger + Conditions.
-        If triggered, simulates the outcome.
-        Returns a DataFrame of results (The Ledger).
+        mode: "NORMAL" or "NULL_RANDOM_DIRECTION"
         """
+        import random
+        random.seed(random_seed)
+        
         results = []
         
-        print(f"Testing Hypothesis {hypothesis.id}: {hypothesis.description}")
+        print(f"Testing Hypothesis {hypothesis.id} | Mode: {mode}")
         
-        # Iterate through all states
         for t in self.sorted_times:
             state = self.states[t]
             
@@ -42,23 +43,9 @@ class HypothesisEngine:
                 continue
             
             # 2. Check Trigger
-            # The Trigger is usually an Event that JUST happened or is happening.
-            # In our schema, 'trigger' is an EventType.
-            # We check if 'recent_events' contains this event ending NOW?
-            # Or if the current bar represents this event?
-            
-            # Simplified: Check if any event in recent_events START_BAR is this bar? 
-            # Or END_BAR? Usually we trade on CONFIRMATION (End Bar).
-            
             trigger_event = None
-            # Scan recent events (last 1-2 bars) that match trigger type
-            # We need to ensure we don't double count.
-            # Let's say we fire on the CLOSE of the bar where the event is confirmed.
-            
             for e in state.recent_events:
                 if e.event_type == hypothesis.trigger.event_type:
-                    # Is this the first time we see it? 
-                    # Assuming we iterate in order, we fire when current_time == e.end_bar
                     if e.end_bar == t: 
                         trigger_event = e
                         break
@@ -66,27 +53,30 @@ class HypothesisEngine:
             if not trigger_event:
                 continue
                 
+            # Determine Direction based on Mode
+            if mode == "NORMAL":
+                # Strategy logic defines direction (Sweep Low -> Bullish)
+                # Usually part of the Trigger Event or Hypothesis logic
+                # Our Trigger Event HAS a direction already assigned by Extractor.
+                trade_direction = trigger_event.direction
+            elif mode == "NULL_RANDOM_DIRECTION":
+                # Override with coin flip
+                trade_direction = random.choice([Direction.BULLISH, Direction.BEARISH])
+                
             # 3. Simulate Outcome
-            outcome = self._simulate_outcome(t, hypothesis, trigger_event)
+            outcome = self._simulate_outcome(t, hypothesis, trigger_event, trade_direction)
             if outcome:
                 outcome['trigger_time'] = t
                 outcome['session'] = state.session.value if hasattr(state.session, 'value') else state.session
                 outcome['regime'] = state.regime.value if hasattr(state.regime, 'value') else state.regime
+                outcome['mode'] = mode
                 results.append(outcome)
                 
         return pd.DataFrame(results)
 
     def _check_conditions(self, state: MarketState, conditions: List[Any]) -> bool:
-        """
-        Validates generic conditions against the State.
-        """
+        # ... (Unchanged)
         for cond in conditions:
-            # Example: "regime" == "LOW_VOL"
-            # Example: "session" == "NY_AM"
-            # Example: "price_relation_to_vwap" == "BELOW"
-            # Example: "active_swings" contains "SWING_HIGH" (Not implemented generic parsing deeply yet)
-            
-            # Hardcoded parsing for the specific requested hypothesis style
             if cond.metric == 'session':
                 if state.session != cond.value: return False
             elif cond.metric == 'regime':
@@ -94,13 +84,12 @@ class HypothesisEngine:
             elif cond.metric == 'price_relation_to_vwap':
                 if cond.operator == '==':
                     if state.price_relation_to_vwap != cond.value: return False
-            # Add more parsing logic here
-            
         return True
 
-    def _simulate_outcome(self, start_time: datetime, hypothesis: Hypothesis, trigger: StructureEvent) -> Optional[Dict]:
+    def _simulate_outcome(self, start_time: datetime, hypothesis: Hypothesis, trigger: StructureEvent, direction: Direction) -> Optional[Dict]:
         """
-        Forward tests from start_time until Expectation met or Invalidation hit.
+        Forward tests from start_time.
+        direction: The explicit direction to trade (Standard or Random).
         """
         start_idx = self.time_to_idx[start_time]
         
@@ -108,10 +97,76 @@ class HypothesisEngine:
         entry_price = self.price_lookup[start_time]['close']
         atr = self.price_lookup[start_time]['atr']
         
-        target_dist = hypothesis.expectation.min_value * atr
-        # Adjust target based on direction
-        # If trigger direction is BULLISH -> Target is Up
-        is_long = (trigger.direction == Direction.BULLISH)
+        # Risk Calculation
+        # We need to know the 'Structural Stop Distance' intended by the strategy
+        # even if we are trading the other way (to keep "Same Invalidation Logic" / Risk Sizing).
+        
+        # Original Strategy Logic for Stp
+        # If Sweep Low (Bullish Trigger): Stop is Low of Sweep. Distance = Entry - Low.
+        # If Sweep High (Bearish Trigger): Stop is High of Sweep. Distance = High - Entry.
+        
+        stop_distance = 0.0
+        
+        if trigger.event_type == EventType.LIQUIDITY_SWEEP:
+            # Calculate the structural risk distance based on the EVENT (not necessarily the trade direction)
+            # Example: A sweep of a low happens. The "structure" implies the Low is important.
+            # Implied Bullish Stop = Entry - Low
+            # Implied Bearish Stop (Breakout) = High - Entry? Or same distance?
+            # User Protocol: "Use same SL / invalidation logic".
+            # This implies symmetric risk distance if we flip direction.
+            
+            sweep_high = self.price_lookup[start_time]['high']
+            sweep_low = self.price_lookup[start_time]['low']
+            
+            if trigger.direction == Direction.BULLISH: # Original Event was Bullish (Sweep Low)
+                stop_distance = entry_price - sweep_low
+            else: # Original Event was Bearish (Sweep High)
+                stop_distance = sweep_high - entry_price
+        else:
+            # Default fallback (1 ATR?)
+            stop_distance = 1.0 * atr
+            
+        # Ensure non-zero positive distance
+        if stop_distance <= 0: stop_distance = 0.5 * atr
+        
+        # Calculate Targets based on TRADE Direction
+        is_long = (direction == Direction.BULLISH)
+        
+        # STOP PRICE
+        stop_price = (entry_price - stop_distance) if is_long else (entry_price + stop_distance)
+        
+        # TARGET PRICE (3R)
+        # Using the SAME R-multiple as strategy
+        target_dist = hypothesis.expectation.min_value * stop_distance # Use structural Risk as R unit? 
+        # Wait, strategy definition says "3.0 * ATR" or just "3.0" R?
+        # Hypothesis expectation says 'target_metric="r_multiple"'. 
+        # Usually R is defined by the risk.
+        # But previous runs used 'target_dist = min_value * atr'.
+        # Let's align. If min_value is "3.0" and target_metric is "r_multiple", it means 3 * Risk.
+        # But if code previously calculated based on ATR...
+        # Code check: `target_dist = hypothesis.expectation.min_value * atr`
+        # This implies Fixed ATR Risk in previous run?
+        # Let's check previous code snippet (Step 365).
+        # Yes, it used `min_value * atr`.
+        # AND it used `inval_price` based on candle Low/High.
+        # So Risk = (Entry - High/Low)? No, risk was dynamic.
+        # Target was Fixed ATR?
+        # If Target is Fixed ATR, then R-multiple varies per trade.
+        # The User report said "27.4% win at 3R". 
+        # If Target was ATR-based, was Risk also ATR-based?
+        # Let's check invalidation again.
+        # `inval_price = ... low/high`.
+        # So Risk IS dynamic (candle size).
+        # Target was `hypothesis.expectation.min_value * atr`.
+        # So Reward is ATR-based. Risk is Candle-based.
+        # This means R is NOT fixed 3.0 outcome. It's var-R.
+        # BUT... `pnl_r` calculation in result?
+        # Previous code:
+        # `pnl_r`: hypothesis.expectation.min_value` (if win) or `-1.0` (if loss).
+        # This HARDCODES the result R value, assuming the setup matched the ratio.
+        # NOTE: This effectively assumes we Position Size for 1R = Risk.
+        # So if we win, we confirm we hit the target.
+        # Valid Null Test MUST maintain this "Fixed R Outcome" assumption logic if we want comparable distributions.
         
         target_price = entry_price + target_dist if is_long else entry_price - target_dist
         
