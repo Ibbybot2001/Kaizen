@@ -113,10 +113,21 @@ class HypothesisEngine:
         
         target_price = entry_price + target_dist if is_long else entry_price - target_dist
         
-        # Invalidation
-        # Simple: Close below Trigger Low (if long)
-        inval_price = self.price_lookup[start_time]['low'] if is_long else self.price_lookup[start_time]['high'] 
-        # (This is a simplification, ideally invalidation logic comes from Hypothesis object)
+        if trigger.event_type == EventType.LIQUIDITY_SWEEP:
+            # For a sweep, the invalidation point is the extreme of the sweep.
+            # Bullish Sweep (Dir=BULLISH): We swept a Low. Extreme is swept_level - sweep_depth.
+            # Bearish Sweep (Dir=BEARISH): We swept a High. Extreme is swept_level + sweep_depth.
+            # (Or simply the High/Low of the trigger bar, if the sweep happened on that bar).
+            # Our extraction logic says start_bar=end_bar=curr_time.
+            # And sweep_depth is calculated from that bar.
+            # So looking up the bar High/Low is safer/simpler than reconstructing from depth.
+            if is_long:
+                inval_price = self.price_lookup[start_time]['low'] 
+            else:
+                inval_price = self.price_lookup[start_time]['high']
+        else:
+            # Default for other setups
+            inval_price = self.price_lookup[start_time]['low'] if is_long else self.price_lookup[start_time]['high']
         
         # Scan forward
         max_duration = hypothesis.expectation.within_bars
@@ -181,41 +192,34 @@ if __name__ == "__main__":
     loader = DataLoader(r"C:\Users\CEO\.gemini\antigravity\scratch\kaizen_1m_data_ibkr_2yr.csv")
     df = loader.load_and_process().head(10000)
     
+    # ... (previous setup)
     print("Extracting Structure...")
     extractor = StructureExtractor(df)
     events = []
-    events.extend(extractor.extract_swings())
+    swings = extractor.extract_swings() # Need reference to swings for sweep extraction
+    events.extend(swings)
     events.extend(extractor.extract_compressions())
     events.extend(extractor.extract_displacements())
+    events.extend(extractor.extract_sweeps(swings, min_reclaim_pts=0.25)) # Add Sweeps
     
     print("Building States...")
     builder = StateBuilder(df, events)
     states = builder.build_states()
     
-    # Define Test Hypothesis (H-001)
-    # Context: Low Volatility (Compression)
-    # Trigger: Displacement Candle
-    # Expectation: 1R move in 10 bars
-    
-    h1 = Hypothesis(
-        id="H-001",
-        description="Compression -> Displacement Expansion",
-        conditions=[
-            Condition(metric="regime", operator="==", value=Regime.LOW_VOL)
-        ],
-        trigger=Trigger(event_type=EventType.DISPLACEMENT, conditions=[]),
-        expectation=ResultExpectation(target_metric="r_multiple", min_value=1.5, within_bars=15),
-        invalidation=InvalidationCriteria(metric="price", operator="<", reference_value="trigger_low")
-    )
+    # Import Kaizen Reversal Hypothesis
+    from hypotheses.kaizen_reversal import get_kaizen_reversal_hypothesis
+    h_kaizen = get_kaizen_reversal_hypothesis()
     
     engine = HypothesisEngine(states, df)
-    results = engine.run(h1)
+    results = engine.run(h_kaizen)
     
-    print("\n--- Backtest Results ---")
+    print("\n--- Kaizen Reversal Backtest Results ---")
     if not results.empty:
         print(results['result'].value_counts())
         print(f"Total Trades: {len(results)}")
-        print(f"Win Rate: {len(results[results['result']=='WIN']) / len(results) * 100:.1f}%")
+        win_rate = len(results[results['result']=='WIN']) / len(results) * 100
+        print(f"Win Rate: {win_rate:.1f}%")
+        print(f"Expectancy (R): { (win_rate/100 * h_kaizen.expectation.min_value) - ((100-win_rate)/100 * 1.0) :.2f}R")
         print(results.head())
     else:
-        print("No trades found matching hypothesis.")
+        print("No trades found matching Kaizen Reversal.")
