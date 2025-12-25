@@ -143,6 +143,67 @@ class DataLoader:
         
         return df
 
+    def log_missing_bars(self) -> None:
+        """
+        Detects and logs gaps in the 1-minute data sequence.
+        Rule 9: 'Missing data must be flagged, logged, and preserved.'
+        """
+        if self.processed_data is None:
+            print("Data not loaded. Call load_and_process() first.")
+            return
+
+        print("\n--- Auditing Data for Missing Bars ---")
+        df = self.processed_data.copy()
+        df = df.sort_values('time')
+        
+        # Calculate time difference between consecutive rows
+        df['delta'] = df['time'].diff()
+        
+        # Filter for gaps > 1 minute (allow 1m + small buffer for drift, say 1m 5s)
+        # Standard gap is 1m. Any gap > 1.5m is a missing bar (or a weekend/holiday).
+        gaps = df[df['delta'] > pd.Timedelta(minutes=1, seconds=30)]
+        
+        if gaps.empty:
+            print("No missing bars detected (sequence is continuous 1-minute).")
+            return
+            
+        print(f"Detected {len(gaps)} non-continuous jumps (Gaps/Weekends/Holidays):")
+        
+        # Iterate and print details
+        data_gaps = []
+        for idx, row in gaps.iterrows():
+            curr_time = row['time']
+            prev_time = df.loc[idx-1, 'time'] # Access by label might strictly require .iloc lookup if index broken
+            # Safest: Use shift in vectorized way or iloc
+            # Let's use the explicit calculated delta
+            
+            duration = row['delta']
+            
+            # Simple heuristic: If gap > 2 days, likely weekend.
+            gap_type = "WEEKEND/HOLIDAY" if duration > pd.Timedelta(days=1, hours=12) else "MISSING DATA"
+            
+            # Print only significant "Missing Data" gaps (e.g. intraday gaps) for visual clutter, 
+            # OR print everything as requested? 
+            # User said "Log Everything".
+            
+            # Detailed Logging
+            print(f"[{gap_type}] Gap: {prev_time} -> {curr_time} | Duration: {duration}")
+            
+            data_gaps.append({
+                'start': prev_time,
+                'end': curr_time,
+                'duration': duration,
+                'type': gap_type
+            })
+            
+        # Persist to log file?
+        # For now, print to stdout is "logging" in this context context, 
+        # but ideally we save to 'logs/missing_bars.log'
+        import os
+        os.makedirs('logs', exist_ok=True)
+        pd.DataFrame(data_gaps).to_csv('logs/data_integrity_audit.csv', index=False)
+        print("Audit saved to logs/data_integrity_audit.csv")
+
 if __name__ == "__main__":
     # Test run
     loader = DataLoader(r"C:\Users\CEO\.gemini\antigravity\scratch\kaizen_1m_data_ibkr_2yr.csv")

@@ -191,6 +191,7 @@ if __name__ == "__main__":
     print("Loading Data...")
     loader = DataLoader(r"C:\Users\CEO\.gemini\antigravity\scratch\kaizen_1m_data_ibkr_2yr.csv")
     df = loader.load_and_process().head(10000)
+    loader.log_missing_bars() # Verify Rule 9 compliance during test run
     
     # ... (previous setup)
     print("Extracting Structure...")

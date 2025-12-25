@@ -399,7 +399,7 @@ class StructureExtractor:
                         swept_level=last_high.price_level,
                         sweep_depth=row['high'] - last_high.price_level,
                         swing_id=last_high.id,
-                        is_major=last_high.is_major
+                        is_major=last_high.is_major # STRICTLY REQUIRED
                     )
                     sweeps.append(sweep)
 
