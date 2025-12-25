@@ -75,9 +75,11 @@ class DisplacementEvent(StructureEvent):
     closing_price: float
 
 class LiquiditySweepEvent(StructureEvent):
-    swept_event_id: str # ID of the Swing/Level that was swept
-    sweep_depth_ticks: float
-    reclaim_time_bars: int
+    swept_level: float
+    sweep_depth: float
+    swing_id: str
+    is_major: bool
+    reclaim_time_bars: int = 0 # Default to 0 for instantaneous sweep
     
 class FailedBreakoutEvent(StructureEvent):
     level_price: float
