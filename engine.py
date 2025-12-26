@@ -47,8 +47,11 @@ class HypothesisEngine:
             for e in state.recent_events:
                 if e.event_type == hypothesis.trigger.event_type:
                     if e.end_bar == t: 
-                        trigger_event = e
-                        break
+                        # Check Trigger Conditions (Specific to the Event)
+                        # e.g. is_major == True
+                        if self._check_trigger_conditions(e, hypothesis.trigger.conditions):
+                            trigger_event = e
+                            break
             
             if not trigger_event:
                 continue
@@ -98,6 +101,19 @@ class HypothesisEngine:
             elif cond.metric == 'price_relation_to_vwap':
                 if cond.operator == '==':
                     if state.price_relation_to_vwap != cond.value: return False
+        return True
+
+    def _check_trigger_conditions(self, event: StructureEvent, conditions: List[Any]) -> bool:
+        """
+        Validates conditions against the Trigger Event itself.
+        """
+        for cond in conditions:
+            # Example: metric="is_major", value=True
+            if hasattr(event, cond.metric):
+                val = getattr(event, cond.metric)
+                if cond.operator == '==':
+                    if val != cond.value: return False
+                # Add other operators if needed
         return True
 
     def _simulate_outcome(self, start_time: datetime, hypothesis: Hypothesis, trigger: StructureEvent, direction: Direction) -> Optional[Dict]:
@@ -282,31 +298,40 @@ if __name__ == "__main__":
     from hypotheses.kaizen_reversal import get_kaizen_reversal_hypothesis
     h_kaizen = get_kaizen_reversal_hypothesis()
     
-    engine = HypothesisEngine(states, df)
-    # 1. Real Strategy Run
-    print("\n--- [RUN 1] Kaizen Reversal (Strategy - Enriched) ---")
-    results_strat = engine.run(h_kaizen, mode="NORMAL")
-    results_strat.to_csv("logs/run_strategy_enriched.csv", index=False)
+    # --- MAJOR FILTER APPLICATION ---
+    # Add Condition to Trigger: is_major == True
+    h_kaizen.trigger.conditions.append(
+        Condition(metric="is_major", operator="==", value=True)
+    )
+    print("Applied Filter: Trigger.is_major == True")
     
-    # Skip Null Run for this specific analysis task
-    """
-    # 2. Null Hypothesis Run
-    print("\n--- [RUN 2] Null Hypothesis (Random Direction) ---")
-    results_null = engine.run(h_kaizen, mode="NULL_RANDOM_DIRECTION", random_seed=999)
-    results_null.to_csv("logs/run_null.csv", index=False)
-    """
+    engine = HypothesisEngine(states, df)
+    
+    # 1. Real Strategy Run (Major Only)
+    print("\n--- [RUN 1] Kaizen Reversal (Major Only) ---")
+    results_strat = engine.run(h_kaizen, mode="NORMAL")
+    results_strat.to_csv("logs/run_strategy_major.csv", index=False)
+    
+    if not results_strat.empty:
+        win_rate = len(results_strat[results_strat['result']=='WIN']) / len(results_strat)
+        mean_r = results_strat['pnl_r'].mean()
+        print(f"Strategy Expectancy: {mean_r:.4f} R | WR: {win_rate*100:.1f}%")
+        
+    # 2. Null Hypothesis Run (on Major Only events)
+    print("\n--- [RUN 2] Null Hypothesis (Random Direction, Major Filters) ---")
+    results_null = engine.run(h_kaizen, mode="NULL_RANDOM_DIRECTION", random_seed=777)
+    results_null.to_csv("logs/run_null_major.csv", index=False)
     
     if not results_null.empty:
         win_rate = len(results_null[results_null['result']=='WIN']) / len(results_null)
         mean_r = results_null['pnl_r'].mean()
         print(f"Null Expectancy: {mean_r:.4f} R | WR: {win_rate*100:.1f}%")
-        
+
     # Comparison
-    print("\n--- COMPARISON ---")
     if not results_strat.empty and not results_null.empty:
         diff = results_strat['pnl_r'].mean() - results_null['pnl_r'].mean()
         print(f"Strategy Advantage: {diff:.4f} R")
         if diff > 0.05:
             print("PASS: Strategy outperforms Null significantly.")
         else:
-            print("FAIL: Strategy provides no significant edge over coin flip at these levels.")
+            print("FAIL: Strategy provides no significant edge over coin flip.")

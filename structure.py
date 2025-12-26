@@ -15,75 +15,50 @@ class StructureExtractor:
         # Ensure strict datetime sorting
         self.df = self.df.sort_values('time').reset_index(drop=True)
 
-    def extract_swings(self, left_bars: int = 5, right_bars: int = 5) -> List[SwingEvent]:
+    def extract_swings(self, left_bars: int = 5, right_bars: int = 5, major_factor: int = 3) -> List[SwingEvent]:
         """
         Identifies Standard Pivot Highs and Lows.
-        Rules:
-        - High > Highs of [left_bars]
-        - High > Highs of [right_bars]
-        - Similar logic for Lows
+        Major Check: Is it also a pivot for [left*factor, right*factor]?
         """
         swings = []
         
-        # Note: We need 'right_bars' of future data to confirm a swing.
-        # Ideally, we iterate through the dataframe. For performance, we can vectorize.
-        # But to create rich 'SwingEvent' objects, iteration or hybrid approach is best.
-        
-        # Using rolling windows for efficiency
-        # Shifted windows to center the point of interest
-        
-        # Determine High Pivots
-        # roll_max(window=left+right+1, center=True) checks the surroundings
-        # If current high == roll_max, it's a potential pivot.
-        
         window_size = left_bars + right_bars + 1
-        
-        # We must use 'shift' carefully. 
-        # rolling(center=True) looks ahead. In a backtest engine, we can compute this upfront for history.
-        # But 'confidence_score' implies we might not establish it immediately at bar 0?
-        # Actually, for a pure backtest on historical data, we can just extract them all.
+        major_window = (left_bars * major_factor) + (right_bars * major_factor) + 1
         
         df = self.df.copy()
         
+        # Minor Pivots
         df['max_local'] = df['high'].rolling(window=window_size, center=True).max()
         df['min_local'] = df['low'].rolling(window=window_size, center=True).min()
         
-        # Identify Pivot High candidates
-        # A bar is max if high == max_local AND it's not NaN
-        pivot_highs = df[df['high'] == df['max_local']]
+        # Major Pivots (Wider look)
+        df['max_major'] = df['high'].rolling(window=major_window, center=True).max()
+        df['min_major'] = df['low'].rolling(window=major_window, center=True).min()
         
-        # Identify Pivot Low candidates
+        pivot_highs = df[df['high'] == df['max_local']]
         pivot_lows = df[df['low'] == df['min_local']]
         
-        # Process Highs
         for idx, row in pivot_highs.iterrows():
-            # Rolling max window is centered, so the high happened 'right_bars' ago relative to the end of window?
-            # No, 'rolling(center=True)' puts the result at the center index.
-            # So if row['time'] is T, the data used included T + right_bars.
-            # Therefore, we strictly DO NOT KNOW this is a swing until T + right_bars.
-            
-            # Since we are iterating on the subset that IS a pivot logic,
-            # We must calculate the confirmation time.
-            
-            # Note: We need the dataframe to look up the time right_bars later.
-            # But 'pivot_highs' is a subset. We need the integer index from original df.
-            
             loc_idx = df.index.get_loc(idx)
             conf_idx = loc_idx + right_bars
             
-            if conf_idx >= len(df):
-                continue # Cannot confirm yet (end of data)
+            if conf_idx >= len(df): continue
                 
-            conf_time = df.iloc[conf_idx]['time'] # The close of the confirmation bar
+            conf_time = df.iloc[conf_idx]['time']
+            
+            # Major Check
+            # Ensure it is the max in the wider window
+            # Note: A Minor swing might NOT be the max of the wider window at the exact same center?
+            # Yes, if there is a higher high 10 bars away.
+            is_major = (row['high'] == row['max_major'])
             
             event_id = f"SW-H-{row['time'].isoformat()}"
-            
             context = ContextTags(
                 session=Session(row['session']) if row['session'] in ["ASIA", "LONDON"] else Session.OTHER, 
-                regime=Regime.CHOP, # Placeholder
+                regime=Regime.CHOP,
                 time_of_day=row['time'].strftime('%H:%M'),
                 day_of_week=row['time'].dayofweek,
-                distance_to_vwap_std=(row['high'] - row['vwap']) / row['atr'] if row['atr'] > 0 else 0
+                distance_to_vwap_std=0
             )
             
             swing = SwingEvent(
@@ -91,33 +66,31 @@ class StructureExtractor:
                 event_type=EventType.SWING_HIGH,
                 start_bar=row['time'],
                 end_bar=row['time'],
-                confirmed_at=conf_time, # KEY CHANGE: Event is born here!
+                confirmed_at=conf_time,
                 direction=Direction.BEARISH, 
                 confidence_score=1.0, 
                 context=context,
                 price_level=row['high'],
-                is_major=False 
+                is_major=is_major # Calculated
             )
             swings.append(swing)
 
-        # Process Lows
         for idx, row in pivot_lows.iterrows():
             loc_idx = df.index.get_loc(idx)
             conf_idx = loc_idx + right_bars
             
-            if conf_idx >= len(df):
-                continue
+            if conf_idx >= len(df): continue
 
             conf_time = df.iloc[conf_idx]['time']
+            is_major = (row['low'] == row['min_major'])
 
             event_id = f"SW-L-{row['time'].isoformat()}"
-            
             context = ContextTags(
                 session=Session(row['session']) if row['session'] in ["ASIA", "LONDON"] else Session.OTHER,
                 regime=Regime.CHOP,
                 time_of_day=row['time'].strftime('%H:%M'),
                 day_of_week=row['time'].dayofweek,
-                distance_to_vwap_std=(row['low'] - row['vwap']) / row['atr'] if row['atr'] > 0 else 0
+                distance_to_vwap_std=0
             )
             
             swing = SwingEvent(
@@ -125,22 +98,16 @@ class StructureExtractor:
                 event_type=EventType.SWING_LOW,
                 start_bar=row['time'],
                 end_bar=row['time'],
-                confirmed_at=conf_time, # KEY CHANGE
+                confirmed_at=conf_time, 
                 direction=Direction.BULLISH, 
                 confidence_score=1.0,
                 context=context,
                 price_level=row['low'],
-                is_major=False
+                is_major=is_major # Calculated
             )
             swings.append(swing)
 
-        # Sort by confirmation time or start time?
-        # Events should be sorted by when they likely enter the system usage.
-        # But 'StructureEvent' usually implies start.
-        # Let's keep sorting by start_bar for the list, 
-        # but StateBuilder must index by confirmed_at.
         swings.sort(key=lambda x: x.start_bar)
-        
         return swings
 
     def extract_compressions(self, min_bars: int = 12, max_atr_ratio: float = 0.8) -> List[CompressionEvent]:
