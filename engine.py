@@ -70,6 +70,20 @@ class HypothesisEngine:
                 outcome['session'] = state.session.value if hasattr(state.session, 'value') else state.session
                 outcome['regime'] = state.regime.value if hasattr(state.regime, 'value') else state.regime
                 outcome['mode'] = mode
+                
+                # Enhanced Context for Loss Analysis
+                if trigger_event.event_type == EventType.LIQUIDITY_SWEEP:
+                    outcome['sweep_depth'] = getattr(trigger_event, 'sweep_depth', 0)
+                    outcome['is_major'] = getattr(trigger_event, 'is_major', False)
+                else:
+                    outcome['sweep_depth'] = 0
+                    outcome['is_major'] = False
+                    
+                # Context Tags
+                if trigger_event.context:
+                    outcome['vwap_dist'] = trigger_event.context.distance_to_vwap_std
+                    outcome['time_of_day'] = trigger_event.context.time_of_day
+                    
                 results.append(outcome)
                 
         return pd.DataFrame(results)
@@ -270,19 +284,17 @@ if __name__ == "__main__":
     
     engine = HypothesisEngine(states, df)
     # 1. Real Strategy Run
-    print("\n--- [RUN 1] Kaizen Reversal (Strategy) ---")
+    print("\n--- [RUN 1] Kaizen Reversal (Strategy - Enriched) ---")
     results_strat = engine.run(h_kaizen, mode="NORMAL")
-    results_strat.to_csv("logs/run_strategy.csv", index=False)
+    results_strat.to_csv("logs/run_strategy_enriched.csv", index=False)
     
-    if not results_strat.empty:
-        win_rate = len(results_strat[results_strat['result']=='WIN']) / len(results_strat)
-        mean_r = results_strat['pnl_r'].mean()
-        print(f"Strategy Expectancy: {mean_r:.4f} R | WR: {win_rate*100:.1f}%")
-        
+    # Skip Null Run for this specific analysis task
+    """
     # 2. Null Hypothesis Run
     print("\n--- [RUN 2] Null Hypothesis (Random Direction) ---")
     results_null = engine.run(h_kaizen, mode="NULL_RANDOM_DIRECTION", random_seed=999)
     results_null.to_csv("logs/run_null.csv", index=False)
+    """
     
     if not results_null.empty:
         win_rate = len(results_null[results_null['result']=='WIN']) / len(results_null)
