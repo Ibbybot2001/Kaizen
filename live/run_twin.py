@@ -21,11 +21,13 @@ def run_simulation(df, mode_name, use_regime, use_cooldown, use_usage):
     
     closed_trades = []
     
+
     # Execution State
     current_pos = 0 # 1 or -1
     entry_price = np.nan
     entry_sl = np.nan
     entry_tp = np.nan
+    current_meta = {} # Store metadata for active trade
     
     # Limit Order Queue (Signal at Close -> Execute at Next Open)
     pending_signal = None 
@@ -70,19 +72,25 @@ def run_simulation(df, mode_name, use_regime, use_cooldown, use_usage):
                     exit_triggered = True
                     
             if exit_triggered:
-                closed_trades.append({
+                trade_record = {
                     'exit_time': ts_ms,
                     'pnl': pnl,
-                    'reason': reason
-                })
+                    'reason': reason,
+                    'mode': mode_name
+                }
+                trade_record.update(current_meta)
+                closed_trades.append(trade_record)
+                
                 current_pos = 0
                 entry_price = np.nan
+                current_meta = {}
         
         # B. Execute PENDING Entries (from Prev Close)
         if pending_signal:
             sig_type = pending_signal['signal']
             sig_sl = pending_signal['sl']
             sig_atr = pending_signal['atr']
+            sig_meta = pending_signal.get('meta', {})
             
             fill_price = row_open
             
@@ -104,11 +112,15 @@ def run_simulation(df, mode_name, use_regime, use_cooldown, use_usage):
                 else:
                     flip_pnl = (entry_price - fill_price) * 2
                 
-                closed_trades.append({
+                flip_record = {
                     'exit_time': ts_ms,
                     'pnl': flip_pnl,
-                    'reason': "Reverse"
-                })
+                    'reason': "Reverse",
+                    'mode': mode_name
+                }
+                flip_record.update(current_meta)
+                closed_trades.append(flip_record)
+                
                 if flip_pnl < 0:
                     twin.record_loss(ts_ms)
             
@@ -116,6 +128,7 @@ def run_simulation(df, mode_name, use_regime, use_cooldown, use_usage):
             entry_price = fill_price
             entry_sl = sig_sl
             entry_tp = target_tp
+            current_meta = sig_meta # Activate new meta
             
             pending_signal = None
             
@@ -125,24 +138,34 @@ def run_simulation(df, mode_name, use_regime, use_cooldown, use_usage):
                     pnl = (entry_sl - entry_price) * 2
                     reason = "SL Hit (Same Bar)"
                     twin.record_loss(ts_ms)
-                    closed_trades.append({'exit_time': ts_ms, 'pnl': pnl, 'reason': reason})
+                    
+                    rec = {'exit_time': ts_ms, 'pnl': pnl, 'reason': reason, 'mode': mode_name}
+                    rec.update(current_meta)
+                    closed_trades.append(rec)
+                    
                     current_pos = 0
                  elif row_high >= entry_tp:
                     pnl = (entry_tp - entry_price) * 2
                     reason = "TP Hit (Same Bar)"
-                    closed_trades.append({'exit_time': ts_ms, 'pnl': pnl, 'reason': reason})
+                    rec = {'exit_time': ts_ms, 'pnl': pnl, 'reason': reason, 'mode': mode_name}
+                    rec.update(current_meta)
+                    closed_trades.append(rec)
                     current_pos = 0
             elif current_pos == -1:
                  if row_high >= entry_sl:
                     pnl = (entry_price - entry_sl) * 2
                     reason = "SL Hit (Same Bar)"
                     twin.record_loss(ts_ms)
-                    closed_trades.append({'exit_time': ts_ms, 'pnl': pnl, 'reason': reason})
+                    rec = {'exit_time': ts_ms, 'pnl': pnl, 'reason': reason, 'mode': mode_name}
+                    rec.update(current_meta)
+                    closed_trades.append(rec)
                     current_pos = 0
                  elif row_low <= entry_tp:
                     pnl = (entry_price - entry_tp) * 2
                     reason = "TP Hit (Same Bar)"
-                    closed_trades.append({'exit_time': ts_ms, 'pnl': pnl, 'reason': reason})
+                    rec = {'exit_time': ts_ms, 'pnl': pnl, 'reason': reason, 'mode': mode_name}
+                    rec.update(current_meta)
+                    closed_trades.append(rec)
                     current_pos = 0
 
         # 2. LOGIC PHASE (At Close of this Bar)
@@ -155,6 +178,7 @@ def run_simulation(df, mode_name, use_regime, use_cooldown, use_usage):
         if count % 100000 == 0:
             print(f"Processed {count}...")
 
+
     # Report
     print(f"[{mode_name}] Total Trades: {len(closed_trades)}")
     if closed_trades:
@@ -162,6 +186,12 @@ def run_simulation(df, mode_name, use_regime, use_cooldown, use_usage):
         wins = df_res[df_res['pnl'] > 0]
         print(f"[{mode_name}] Win Rate: {len(wins)/len(closed_trades)*100:.2f}%")
         print(f"[{mode_name}] Total PnL: {df_res['pnl'].sum():.2f}")
+        
+        # Save to CSV
+        output_path = os.path.join(os.path.dirname(__file__), f"trades_{mode_name.lower()}.csv")
+        df_res.to_csv(output_path, index=False)
+        print(f"[{mode_name}] Saved trades to {output_path}")
+        
         return len(closed_trades), df_res['pnl'].sum()
     return 0, 0.0
 

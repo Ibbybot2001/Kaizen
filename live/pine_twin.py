@@ -61,8 +61,10 @@ class PineTwin_KaizenV2_Logic:
         # ATR Buffer for Initialization (First 14 bars)
         self.tr_buffer = []
         
+
         # Usage Gating State
         self.used_levels = set() # Stores 'idx' of levels that have triggered a trade
+        self.level_hits = collections.defaultdict(int) # Counts hits per level idx
 
     def on_bar_close(self, timestamp_ms, open, high, low, close, volume):
         """
@@ -277,6 +279,9 @@ class PineTwin_KaizenV2_Logic:
         target_sl = np.nan
         atr_val_final = atr_val
         
+
+        signal_meta = {}
+        
         if not np.isnan(active_high) and is_taking_trades:
             # Check Usage
             if active_high_id not in self.used_levels:
@@ -285,6 +290,15 @@ class PineTwin_KaizenV2_Logic:
                         signal = 'SHORT'
                         target_sl = active_high + (atr_val * 0.25)
                         self.used_levels.add(active_high_id)
+                        self.level_hits[active_high_id] += 1
+                        
+                        signal_meta = {
+                            'structure_age': self.bar_index - active_high_id,
+                            'reclaim_depth': active_high - close,
+                            'is_expansion': (self.bar_index < self.expansion_end_idx),
+                            'retest_count': self.level_hits[active_high_id],
+                            'active_level': active_high
+                        }
                     
         if not np.isnan(active_low) and is_taking_trades and (signal is None):
             if active_low_id not in self.used_levels:
@@ -293,13 +307,23 @@ class PineTwin_KaizenV2_Logic:
                         signal = 'LONG'
                         target_sl = active_low - (atr_val * 0.25)
                         self.used_levels.add(active_low_id)
+                        self.level_hits[active_low_id] += 1
+                        
+                        signal_meta = {
+                            'structure_age': self.bar_index - active_low_id,
+                            'reclaim_depth': close - active_low,
+                            'is_expansion': (self.bar_index < self.expansion_end_idx),
+                            'retest_count': self.level_hits[active_low_id],
+                            'active_level': active_low
+                        }
                     
         # Return Signal Packet
         if signal:
             return {
                 'signal': signal,
                 'sl': target_sl,
-                'atr': atr_val_final
+                'atr': atr_val_final,
+                'meta': signal_meta
             }
         return None
 
