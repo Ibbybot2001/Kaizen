@@ -12,13 +12,14 @@ class PineTwin_KaizenV2_Logic:
     """
     
 
-    def __init__(self, use_regime_gate=False, use_cooldown=False, use_usage_gate=False):
+    def __init__(self, use_regime_gate=False, use_cooldown=False, use_usage_gate=False, expansion_mult=1.5):
         # Configuration Flags (Mode Controls)
         self.use_regime_gate = use_regime_gate
         self.use_cooldown = use_cooldown
         self.use_usage_gate = use_usage_gate
 
         # Parameters
+        self.expansion_mult = expansion_mult
         self.filters_on = True
         self.cooldown_min = 15
         self.expansion_bars = 10
@@ -140,7 +141,7 @@ class PineTwin_KaizenV2_Logic:
         # 4. Regime (Expansion)
         atr_floor = (atr_val >= (self.mintick * 10))
         is_expansion_event = False
-        if atr_floor and ((high - low) >= (1.5 * atr_val)) and (volume >= vol_ma):
+        if atr_floor and ((high - low) >= (self.expansion_mult * atr_val)) and (volume >= vol_ma):
             is_expansion_event = True
             # print(f"DEBUG: Expansion Event at {self.bar_index}")
             
